@@ -1,0 +1,20 @@
+# Python / tooling
+.venv/
+__pycache__/
+.pytest_cache/
+
+# Secrets
+.env
+
+# Run outputs (cached Gemini results, shrunk videos, reports) and evaluation results
+runs/
+
+# Class recordings and local-only data (real reviewer comments): never commit
+*.mp4
+*.mkv
+*.mov
+*.webm
+*.m4v
+category_test/
+data/
+.DS_Store

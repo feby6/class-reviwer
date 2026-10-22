@@ -1,0 +1,144 @@
+# Checklist: Step B (step_b_judge.py) answers each item as a narrow factual question; scoring.py only aggregates.
+#   kind:  visual -> evidence = timestamp + description of what is seen
+#          audio  -> evidence = timestamp + quote of what is said
+#   tier:  hard  -> clear fail = Poor + quality_issue flag; unclear = warning only
+#          core  -> fail = 2 issue points      minor -> fail = 1 issue point
+#          bonus -> never adds points (pass or n_a only)
+#          unclear on a core/minor item = 0.5 points
+#   good / improve: fixed feedback phrases, so the same results always give the same text.
+items:
+  - id: background
+    kind: visual
+    tier: hard
+    check: >
+      Is the company's 8x8 ("Eight Times Eight") branding on the tutor's video for most of the class? Either a
+      branded virtual background OR the 8x8 logo/frame overlaid on the tutor's video (even over a real room)
+      counts. Small glitches or blur still pass (note them). Fail only if there is no 8x8 branding at all, or a
+      clearly different background, for most of the class. Unclear if the tutor's tile is rarely visible.
+    good: Branded 8x8 background in use
+    improve: Use the branded 8x8 virtual background
+
+  - id: face_visible
+    kind: visual
+    tier: hard
+    check: >
+      Can the children see the tutor's face for most of the class? Screen-share or speaker layouts that hide the
+      tutor's tile are NOT the tutor's fault and do not count against this; judge only times when the tutor's tile
+      is on screen. Fail only if, when the tile is visible, the face is mostly not there (camera off, out of frame,
+      only background). Unclear if the tile is hidden most of the time.
+    good: Face clearly visible on camera
+    improve: Keep your face visible on camera
+
+  - id: no_repeated_issue
+    kind: visual
+    tier: hard
+    check: >
+      Within this class, does the same setup problem keep coming back during teaching: the camera going off, the
+      face leaving the frame, or the 8x8 background dropping, 3 or more separate times, each lasting more than about
+      a minute while the tutor's tile is visible? Or is the tutor told about a setup problem (by a child or staff)
+      more than once? Fail if yes, listing each occurrence with its timestamp. Pass if no. Brief blips, problems
+      before class starts or after it ends, and layouts that hide the tutor's tile do not count.
+    good: No repeated setup problems
+    improve: Fix the setup problem that kept coming back during the class
+
+  - id: camera_on
+    kind: visual
+    tier: core
+    check: >
+      During teaching, does the tutor turn the camera off for a noticeable stretch (more than about a minute) while
+      their tile is visible? Ignore before class starts, after it ends, and while a video/media is playing.
+      Fail if yes; pass if no; unclear if you can't tell.
+    good: Camera kept on while teaching
+    improve: Keep the camera on while teaching
+
+  - id: intro_rapport
+    kind: audio
+    tier: core
+    check: >
+      Before teaching, does the tutor spend real time warming up (greeting kids by name, chatting about their
+      day/week, telling them what today is about)? A quick hello or audio check, then straight into content or
+      revision = fail. If the recording starts mid-lesson so the beginning is missing = unclear.
+    good: Good warm-up and introduction before teaching
+    improve: Build rapport and introduce the topic before starting the lesson
+
+  - id: individual_questions
+    kind: audio
+    tier: core
+    check: >
+      Does the tutor ask children questions individually, by name, so most children present get a turn? Judge
+      relative to class size (in a 1-2 child class, addressing them directly is enough). Questions only to the
+      whole group ("anyone?"), or only one or two children out of many ever asked = fail.
+    good: Asked children questions individually by name
+    improve: Ask each child questions individually, by name
+
+  - id: tone
+    kind: audio
+    tier: core
+    check: >
+      Does the tutor praise and encourage the children through the class ("very good", "well done", "great try",
+      or the equivalent in any language), with a quote for each moment? Pass requires several clear moments spread
+      through the class, not just at the start. Mostly instructing with little or no praise = fail. Judge only
+      what is said, not voice energy. Thin or start-only evidence = fail.
+    good: Praised and encouraged the children
+    improve: Praise and encourage the children more
+
+  - id: new_joiner_intros
+    kind: audio
+    tier: core
+    check: >
+      If a new child joins, are they explicitly invited to introduce themselves to the class and given time?
+      Only "are you new?" / asking their name or age = fail. No new child = n_a.
+    good: New joiners invited to introduce themselves
+    improve: Give new joiners time to introduce themselves
+
+  - id: conclusion
+    kind: audio
+    tier: minor
+    check: >
+      Does the tutor wrap up near the end (what was done today / what's next, and a goodbye)? Abrupt end = fail.
+      Recording cut before the end = unclear.
+    good: Proper wrap-up at the end
+    improve: End the class with a proper wrap-up
+
+  - id: homework
+    kind: audio
+    tier: minor
+    check: >
+      Is homework or practice given? Assigning it, or telling the kids to do their homework (e.g. "don't forget to
+      do the homework"), counts. Fail if homework is never mentioned, or the tutor says there is no homework.
+    good: Homework given
+    improve: Give homework
+
+  - id: lighting
+    kind: visual
+    tier: minor
+    check: >
+      Is the tutor's face reasonably lit when visible? Fail only if dim/dark/backlit for long stretches.
+      Unclear if the face is rarely visible.
+    good: Face well lit
+    improve: Sit where your face is well lit
+
+  - id: media
+    kind: visual
+    tier: bonus
+    check: >
+      Is a topic-related video or media played? Pass if yes, otherwise n_a. Never a fail. Sharing a board or
+      puzzle site is normal teaching, not media.
+    good: Played topic-related video/media
+    improve: ""
+
+points:
+  core_fail: 2
+  minor_fail: 1
+  unclear: 0.5
+
+# Issue points -> category: points below `excellent` = Excellent, below `good` = Good, below `average` = Average,
+# otherwise Poor. Defaults = bands 0-1 Excellent, 2-3 Good, 4-5 Average, 6+ Poor.
+# Points exactly on a cut (2, 4, 6) are marked "borderline <better neighbour>".
+bands:
+  excellent: 2
+  good: 4
+  average: 6
+
+# 3 or more unclear items -> their points are not added and the result is marked low confidence.
+low_confidence_unclear: 3
