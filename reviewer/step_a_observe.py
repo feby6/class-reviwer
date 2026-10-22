@@ -22,7 +22,11 @@ PROCESSING_TIMEOUT_S = 10 * 60  # give up if Gemini hasn't finished processing t
 
 PROMPT = """You are watching a recording of an online class for children, led by one adult tutor.
 
-1. First identify the tutor (the adult leading the class: most speaking time, usually the host tile).
+0. First decide whether this really is a recording of an online class where an adult tutor teaches children live.
+   If it is not (a movie, vlog, music video, lecture without students, screen recording, etc.), set
+   meta.is_online_class = false with a one-line meta.not_class_reason, leave every list empty and every
+   present = false, and stop there.
+1. Identify the tutor (the adult leading the class: most speaking time, usually the host tile).
    The screen layout may change (gallery grid, speaker view, screen share); always track the tutor's own camera tile.
    During screen share it is often a small thumbnail in a corner.
 2. Record only observable facts. Every fact needs a timestamp in MM:SS (minutes can go above 59, e.g. 75:30) and,

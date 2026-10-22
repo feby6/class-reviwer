@@ -1,0 +1,8 @@
+# Streamlit settings for app/frontend.py (also used on Streamlit Community Cloud)
+[server]
+# MB. Streamlit keeps uploads in memory and Community Cloud allows ~2.7 GB, so keep this at or below 1000.
+# Match MAX_UPLOAD_MB (default 1000) used by the job code.
+maxUploadSize = 1000
+
+[browser]
+gatherUsageStats = false

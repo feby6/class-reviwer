@@ -4,6 +4,7 @@ Steps, in order (see the README for the picture):
   1. precheck   free ffprobe/ffmpeg checks; an unreviewable file stops here at no cost
   2. shrink     re-encode to a small upload (480p, 2 fps, mono)
   3. Step A     Gemini watches the video -> timestamped facts            (step_a_observe.py)
+                (not an online class -> "unreviewable", Step B is skipped)
   4. Step B     Gemini answers each checklist question, 3 votes          (step_b_judge.py)
   5. scoring    code grounds the answers, takes the majority, decides    (scoring.py)
   6. report     report.json + usage.json in the run folder
@@ -26,6 +27,7 @@ import hashlib
 import json
 import logging
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -106,7 +108,7 @@ def _observations(video: Path, run_dir: Path, model: str, force: bool, get_clien
 
 
 def _judgements(obs: Observations, run_dir: Path, model: str, votes: int, force: bool, get_client,
-                usage: dict) -> list[Judgement]:
+                usage: dict, on_step: Callable[[str], None]) -> list[Judgement]:
     """Step B, `votes` times with seeds SEED, SEED+1, ...; each answer is cached separately."""
     prompt = step_b_judge.build_prompt(obs)
     cache_dir = run_dir / STEP_B_CACHE
@@ -124,16 +126,21 @@ def _judgements(obs: Observations, run_dir: Path, model: str, votes: int, force:
             except ValidationError:
                 pass  # saved with an older answer format: ask again
         log.info("Step B: vote %d of %d", k + 1, votes)
+        on_step(f"judging (vote {k + 1} of {votes})")
         j, usage[f"judge_{k}"] = step_b_judge.judge(get_client(), model, prompt, seed=seed)
         _write_json(cache_file, j.model_dump())
         runs.append(j)
     return runs
 
 
-def review(video: Path, run_dir: Path, model: str = DEFAULT_MODEL, force: bool = False, votes: int = 3) -> dict:
+def review(video: Path, run_dir: Path, model: str = DEFAULT_MODEL, force: bool = False, votes: int = 3,
+           on_step: Callable[[str], None] | None = None) -> dict:
     """Review one recording. Results go to `run_dir` (created if missing). Returns the report dict.
-    `force=True` ignores every cache. An unreviewable file returns {"category": "unreviewable", "problems": [...]}."""
+    `force=True` ignores every cache. An unreviewable file returns {"category": "unreviewable", "problems": [...]}.
+    `on_step(name)` is called as each step starts (used by the app to show progress)."""
+    on_step = on_step or (lambda name: None)
     run_dir.mkdir(parents=True, exist_ok=True)
+    on_step("precheck")
     check = _precheck(video, run_dir, force)
     if check["problems"]:
         report = {"video": video.name, "category": "unreviewable", "problems": check["problems"]}
@@ -148,8 +155,17 @@ def review(video: Path, run_dir: Path, model: str = DEFAULT_MODEL, force: bool =
         return gemini
 
     usage: dict = {}
+    on_step("watching the video")
     obs = _observations(video, run_dir, model, force, get_client, usage)
-    runs = _judgements(obs, run_dir, model, votes, force, get_client, usage)
+    if not obs.meta.is_online_class:  # not a class: nothing to judge, so skip Step B
+        report = {"video": video.name, "duration_s": check["duration_s"], "category": "unreviewable",
+                  "problems": [f"not an online class recording: {obs.meta.not_class_reason or 'no reason given'}"]}
+        _write_json(run_dir / REPORT, report)
+        _write_json(run_dir / USAGE, usage)
+        log.info("done: %s -> not an online class", video.name)
+        return report
+    runs = _judgements(obs, run_dir, model, votes, force, get_client, usage, on_step)
+    on_step("scoring")
 
     grounded = [ground([i.model_dump() for i in j.checklist], check["duration_s"]) for j in runs]
     items, confidence = majority(grounded)

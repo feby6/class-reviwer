@@ -60,6 +60,11 @@ class Quote(BaseModel):
 
 
 class Meta(BaseModel):
+    # decided first: a non-class video (movie, vlog, tutorial with no students) stops the review after Step A
+    is_online_class: bool = Field(description="True only if this is a recording of an online class where an adult "
+                                              "tutor teaches children live (e.g. Zoom/Meet with student tiles)")
+    not_class_reason: str = Field(description="If is_online_class is false: one line saying what the video is "
+                                              "instead. Empty otherwise.")
     languages_spoken: list[str]
     tutor_identification: str = Field(description="Who the tutor is and how you identified them")
     layout_notes: str

@@ -21,7 +21,8 @@ def make_obs(**overrides) -> Observations:
     """Minimal valid Step A observations; pass section dicts to override, e.g. closing={...}."""
     ev = {"present": False, "ts": None, "quote": ""}
     data = {
-        "meta": {"languages_spoken": [], "tutor_identification": "", "layout_notes": ""},
+        "meta": {"is_online_class": True, "not_class_reason": "", "languages_spoken": [],
+                 "tutor_identification": "", "layout_notes": ""},
         "visual": {"camera_off_spans": [], "face_visibility": [], "lighting": [],
                    "background": {"type": "unclear", "has_8x8_branding": False, "description": "",
                                   "glitch_spans": []},
@@ -32,5 +33,6 @@ def make_obs(**overrides) -> Observations:
         "closing": {"conclusion": ev, "homework": ev},
         "key_quotes": [],
     }
-    data.update(overrides)
+    for section, fields in overrides.items():  # merge into the section, e.g. meta={"is_online_class": False}
+        data[section] = {**data[section], **fields} if isinstance(fields, dict) else fields
     return Observations.model_validate(data)

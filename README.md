@@ -30,6 +30,55 @@ uv run pytest                                               # offline tests, no 
 
 Exit code 2 means the file can't be reviewed (not a video, no audio, under 5 minutes, mostly black or silent).
 
+## App (backend + frontend)
+
+One command starts everything (needs the environment from Setup):
+
+```bash
+uv run python -m app        # open http://localhost:8501   (API docs: http://localhost:8000/docs)
+```
+
+`app/__main__.py` starts the backend, waits until it answers, then starts the frontend pointed at it. If either stops,
+both stop; Ctrl+C stops both. Both listen on 127.0.0.1 only. Ports: `API_PORT` (8000) and `UI_PORT` (8501).
+To run them separately (e.g. backend only, for API use): `uv run uvicorn app.api:app --port 8000` and
+`uv run streamlit run app/frontend.py`.
+
+- **Backend** (`app/api.py`, `app/jobs.py`): `POST /reviews` streams the upload into its own folder
+  `runs/<job id>/`, queues the review and returns at once. `GET /reviews/{id}` gives the status and current step
+  (precheck → watching the video → judging vote 1–3 → scoring) and the report when finished. `POST
+  /reviews/{id}/retry` re-runs a failed job in the same folder, reusing finished steps. Only one review runs at a time:
+  a new upload is refused (409) until the current one finishes. Jobs cut off by a restart are marked failed and
+  can be retried. `DELETE /reviews/{id}` removes a finished review's video and results.
+- **Frontend** (`app/frontend.py`): upload, live progress, then category, quality issue, warnings, "Good / Needs
+  work", the checklist with evidence and a JSON download. Past reviews are in the sidebar. It only talks to the
+  backend; the Gemini key never reaches the browser.
+- There is no login: run it on a trusted network or behind an authenticating proxy.
+
+## Deploy on Streamlit Community Cloud
+
+Community Cloud runs a single `streamlit run` process, so the frontend runs reviews itself there (no separate
+backend; same job code, one review at a time).
+
+1. Push the repo to GitHub (already done: `feby6/class-reviwer`, branch `dev`).
+2. On [share.streamlit.io](https://share.streamlit.io): **Create app** → repository `feby6/class-reviwer`, branch
+   `dev`, main file `app/frontend.py`.
+3. **Advanced settings**: Python **3.12**, and paste the secrets:
+   ```toml
+   GEMINI_API_KEY = "your-gemini-key"
+   APP_PASSWORD = "choose-a-strong-password"
+   ```
+4. Deploy. Cloud installs Python packages from `uv.lock` and ffmpeg from `packages.txt`.
+
+Things to know:
+- **Set `APP_PASSWORD`.** The repo is public, so the app is public: without a password anyone with the link can
+  upload videos and spend your Gemini credits.
+- Uploads are limited to 1000 MB (`.streamlit/config.toml`): Streamlit holds uploads in memory and Cloud apps get
+  about 2.7 GB at most. Shrinking a long video with ffmpeg on Cloud's small CPU share can take several minutes.
+- The disk is not permanent: past reviews disappear when the app restarts or is redeployed. A review running at that
+  moment is marked failed (it can be retried only if its folder survived).
+- Apps sleep after 12 hours without visitors; opening the page wakes them.
+- Videos are stored on Streamlit's servers (US) during review and sent to Google for Step A.
+
 ## How it works
 
 ```
@@ -46,7 +95,9 @@ upload ──► 1. precheck ──► 2. shrink ──► 3. Step A: observe �
 3. **Step A — observe** (`step_a_observe.py`): uploads the small video to Gemini, which watches 1 frame every 20 s
    plus the full audio and returns timestamped facts only (`schemas.Observations`): 8x8 branding, camera and face,
    lighting, setup warnings, opening, new joiners, questions to children, praise, closing, homework. The upload is
-   deleted from Google straight after.
+   deleted from Google straight after. Gemini first decides whether the video is an online class at all; if not
+   (movie, vlog, lecture without students…), the result is "unreviewable: not an online class recording" and
+   Step B is skipped. Step A's tokens are still spent, because the video has to be watched to know.
 4. **Step B — judge** (`step_b_judge.py`): Gemini answers each question in `checklist.yaml` from the facts only:
    pass / fail / unclear / n/a, with timestamps, a quote (speech) or description (visuals) and a one-line reason.
    It runs 3 times; it never grades the class or writes feedback.
@@ -64,6 +115,10 @@ upload ──► 1. precheck ──► 2. shrink ──► 3. Step A: observe �
 
 | File | What it does |
 |---|---|
+| `app/__main__.py` | one-command launcher for backend + frontend |
+| `app/api.py` | FastAPI backend: upload, status, retry |
+| `app/jobs.py` | upload rules, job folders, status files, background worker |
+| `app/frontend.py` | Streamlit frontend (uses the backend, or runs reviews itself when deployed alone) |
 | `reviewer/pipeline.py` | `review(video, run_dir)`: runs the steps in order, caches every result |
 | `reviewer/cli.py` | command line entry point |
 | `reviewer/media.py` | precheck and shrink (ffprobe / ffmpeg) |
@@ -121,6 +176,11 @@ uv run python -m evaluation.check_alignment                       # free: Step B
 |---|---|---|
 | `GEMINI_API_KEY` | (required) | Gemini API key |
 | `GEMINI_MODEL` | `gemini-3.8-flash` | model id for both steps (pinned; the served version is logged in `usage.json`) |
+| `APP_PASSWORD` | (none) | if set, the frontend asks for it before anything else (set it on Cloud) |
+| `RUNS_DIR` | `runs` | where the app keeps one folder per upload |
+| `MAX_UPLOAD_MB` | `1000` | largest accepted upload (also set `maxUploadSize` in `.streamlit/config.toml`) |
+| `API_PORT` / `UI_PORT` | `8000` / `8501` | ports used by `python -m app` |
+| `API_URL` | (none) | where the frontend finds the backend; set automatically by `python -m app`. Unset: the frontend runs reviews itself |
 
 Fixed in code: temperature 0, seed 7 (votes use 7, 8, 9), 10-minute request timeout, 1 frame per 20 s, low media
 resolution.
