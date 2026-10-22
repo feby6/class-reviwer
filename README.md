@@ -28,7 +28,8 @@ uv run python -m reviewer.cli path/to/class.mp4 --votes 1   # 1 Step B run inste
 uv run pytest                                               # offline tests, no API calls
 ```
 
-Exit code 2 means the file can't be reviewed (not a video, no audio, under 5 minutes, mostly black or silent).
+Exit code 2 means the file can't be reviewed: not a video, no audio, under 5 minutes, mostly black or silent, or
+not an online class recording.
 
 ## App (backend + frontend)
 
@@ -40,8 +41,15 @@ uv run python -m app        # open http://localhost:8501   (API docs: http://loc
 
 `app/__main__.py` starts the backend, waits until it answers, then starts the frontend pointed at it. If either stops,
 both stop; Ctrl+C stops both. Both listen on 127.0.0.1 only. Ports: `API_PORT` (8000) and `UI_PORT` (8501).
-To run them separately (e.g. backend only, for API use): `uv run uvicorn app.api:app --port 8000` and
-`uv run streamlit run app/frontend.py`.
+To run them separately (e.g. the backend alone for API use), point the frontend at the backend with `API_URL`:
+
+```bash
+uv run uvicorn app.api:app --port 8000
+API_URL=http://localhost:8000 uv run streamlit run app/frontend.py
+```
+
+Without `API_URL` the frontend runs reviews by itself (the Streamlit Cloud mode). Don't run that alongside a backend
+on the same `runs/` folder: the one-review-at-a-time rule only holds within one process.
 
 - **Backend** (`app/api.py`, `app/jobs.py`): `POST /reviews` streams the upload into its own folder
   `runs/<job id>/`, queues the review and returns at once. `GET /reviews/{id}` gives the status and current step
@@ -49,10 +57,14 @@ To run them separately (e.g. backend only, for API use): `uv run uvicorn app.api
   /reviews/{id}/retry` re-runs a failed job in the same folder, reusing finished steps. Only one review runs at a time:
   a new upload is refused (409) until the current one finishes. Jobs cut off by a restart are marked failed and
   can be retried. `DELETE /reviews/{id}` removes a finished review's video and results.
-- **Frontend** (`app/frontend.py`): upload, live progress, then category, quality issue, warnings, "Good / Needs
-  work", the checklist with evidence and a JSON download. Past reviews are in the sidebar. It only talks to the
-  backend; the Gemini key never reaches the browser.
-- There is no login: run it on a trusted network or behind an authenticating proxy.
+- **Frontend** (`app/frontend.py`): upload, live progress, then the category, issue points, quality issue and
+  warnings, and "Good / Needs work" points, each with its reason, timestamps and the words spoken. A JSON download
+  has the full report. Past reviews are in the sidebar, with retry for failed ones and a delete button (removes the
+  video and its results). Uploads are blocked while a review is in progress. It uses the backend when `API_URL` is
+  set and runs reviews itself otherwise; either way the Gemini key stays on the server, never in the browser.
+- **Access:** set `APP_PASSWORD` and the frontend asks for it before anything else. Without it, anyone who can open
+  the page can upload videos (fine on 127.0.0.1, not on a public deployment). The API itself has no login: keep it
+  on a trusted network.
 
 ## Deploy on Streamlit Community Cloud
 
@@ -62,12 +74,17 @@ backend; same job code, one review at a time).
 1. Push the repo to GitHub (already done: `feby6/class-reviwer`, branch `dev`).
 2. On [share.streamlit.io](https://share.streamlit.io): **Create app** → repository `feby6/class-reviwer`, branch
    `dev`, main file `app/frontend.py`.
-3. **Advanced settings**: Python **3.12**, and paste the secrets:
+3. Open **Advanced settings**: choose Python **3.12**, and paste your secrets into the **Secrets** box. The box
+   takes **TOML**: one `NAME = "value"` per line, at the top level (no `[section]` header above them):
    ```toml
    GEMINI_API_KEY = "your-gemini-key"
    APP_PASSWORD = "choose-a-strong-password"
    ```
-4. Deploy. Cloud installs Python packages from `uv.lock` and ffmpeg from `packages.txt`.
+   Secrets can also be added or changed later: app menu **⋮ → Settings → Secrets** (the app restarts).
+4. Deploy. Cloud installs Python packages from `uv.lock` and ffmpeg from `packages.txt`. The page should open on
+   the password screen; if it doesn't, the secrets weren't picked up.
+
+Never put keys in the repo (it is public): no `.env` and no `.streamlit/secrets.toml` in commits.
 
 Things to know:
 - **Set `APP_PASSWORD`.** The repo is public, so the app is public: without a password anyone with the link can
@@ -78,6 +95,56 @@ Things to know:
   moment is marked failed (it can be retried only if its folder survived).
 - Apps sleep after 12 hours without visitors; opening the page wakes them.
 - Videos are stored on Streamlit's servers (US) during review and sent to Google for Step A.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    user([Reviewer in a browser])
+
+    subgraph app["app/  (delivery)"]
+        fe["frontend.py<br/>Streamlit UI<br/>password, upload, progress,<br/>results, delete"]
+        api["api.py<br/>FastAPI<br/>/reviews endpoints"]
+        jobs["jobs.py<br/>upload rules, one review at a time,<br/>background worker, retry, delete"]
+    end
+
+    subgraph reviewer["reviewer/  (review engine)"]
+        pipe["pipeline.py<br/>review(video, run_dir)<br/>runs steps, caches results"]
+        media["media.py<br/>precheck + shrink"]
+        stepA["step_a_observe.py<br/>Step A: watch → facts"]
+        stepB["step_b_judge.py<br/>Step B: answer checklist ×3"]
+        score["scoring.py<br/>evidence check, votes,<br/>category, feedback"]
+        cfg[("checklist.yaml<br/>questions, tiers,<br/>points, bands, phrases")]
+        ffmpeg[["ffmpeg / ffprobe<br/>(local tool)"]]
+    end
+
+    gemini[["Google Gemini<br/>Files API + model"]]
+    runs[("runs/&lt;job id&gt;/<br/>video, job.json, cached steps,<br/>report.json, usage.json")]
+
+    user --> fe
+    fe -- "API_URL set<br/>(python -m app)" --> api --> jobs
+    fe -. "no API_URL<br/>(Streamlit Cloud)" .-> jobs
+    jobs --> pipe
+    pipe --> stepA --> gemini
+    pipe --> stepB --> gemini
+    pipe --> media --> ffmpeg
+    pipe --> score
+    cfg -. questions .-> stepB
+    cfg -. points, bands .-> score
+    jobs <--> runs
+    pipe <--> runs
+```
+
+- **Two ways in, one engine.** Locally, `python -m app` runs the Streamlit frontend and the FastAPI backend; the
+  frontend calls the API. On Streamlit Cloud (one process) the frontend calls `jobs.py` directly. Both paths use the
+  same upload rules, worker and pipeline.
+- **The engine doesn't know about the app.** `reviewer/` takes a video and a folder and returns a report; it can be
+  used from the command line (`reviewer/cli.py`) or any other front end.
+- **AI only where it is needed.** Gemini watches the video (Step A) and answers narrow checklist questions (Step B).
+  Everything that decides the result (evidence check, votes, points, category, feedback text) is plain code, so the
+  same answers always give the same report.
+- **Everything about a review lives in its folder.** Each upload gets `runs/<job id>/`; every paid step is cached
+  there, so retries and re-scoring don't pay twice.
 
 ## How it works
 
@@ -102,7 +169,10 @@ upload ──► 1. precheck ──► 2. shrink ──► 3. Step A: observe �
    pass / fail / unclear / n/a, with timestamps, a quote (speech) or description (visuals) and a one-line reason.
    It runs 3 times; it never grades the class or writes feedback.
 5. **scoring** (`scoring.py`), code only:
-   - an answer without a timestamp + quote/description becomes unclear; timestamps past the video end are dropped
+   - evidence check: a pass on a speech item needs a timestamp + the quoted words; any other answer needs a timestamp
+     + a description or quote (something that was never said, like missing homework, can't be quoted, so the moment
+     it should have happened is described). An answer without its evidence becomes unclear; timestamps past the end
+     of the video are dropped
    - majority vote per item across the 3 runs; agreement between runs = confidence
    - any **hard** item fails → Poor + quality-issue flag
    - otherwise issue points: core fail 2, minor fail 1, unclear 0.5 → bands (0–1 Excellent, 2–3 Good, 4–5 Average,
@@ -116,7 +186,7 @@ upload ──► 1. precheck ──► 2. shrink ──► 3. Step A: observe �
 | File | What it does |
 |---|---|
 | `app/__main__.py` | one-command launcher for backend + frontend |
-| `app/api.py` | FastAPI backend: upload, status, retry |
+| `app/api.py` | FastAPI backend: upload, status, retry, delete |
 | `app/jobs.py` | upload rules, job folders, status files, background worker |
 | `app/frontend.py` | Streamlit frontend (uses the backend, or runs reviews itself when deployed alone) |
 | `reviewer/pipeline.py` | `review(video, run_dir)`: runs the steps in order, caches every result |
